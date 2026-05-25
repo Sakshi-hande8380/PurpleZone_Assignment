@@ -5,29 +5,34 @@ const ErrorDetailSchema = new mongoose.Schema({
   description: { type: String, required: true }
 });
 
+
 const StatementSchema = new mongoose.Schema({
-  _id: {
-    type: String,
-    required: true
-  },
+
   text: {
     type: String,
     required: true
   },
-  corrections: {
-    type: [String],
+
+  explanation: {
+    type: String,
     required: true
   },
-  explanation: {
-    type: String
+
+  correctAnswer: {
+    type: String,
+    default: ''
   },
-  errors: [ErrorDetailSchema],
-  createdAt: {
-    type: Date,
-    default: Date.now
+
+  corrections: {
+    type: [String],
+    default: []
+  },
+
+  errors: {
+    type: [ErrorDetailSchema],
+    default: []
   }
-}, {
-  suppressReservedKeysWarning: true
+
 });
 
-module.exports = mongoose.model('Statement', StatementSchema);
+module.exports = mongoose.models.Statement || mongoose.model('Statement', StatementSchema);

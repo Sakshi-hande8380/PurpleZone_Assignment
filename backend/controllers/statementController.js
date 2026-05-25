@@ -1,234 +1,224 @@
-const Statement = require('../models/Statement');
+﻿const Statement = require('../models/Statement');
 const Submission = require('../models/Submission');
 const { getDbMode } = require('../config/db');
 const mockDb = require('../models/mockDb');
 
-// Helper to sanitize and normalize text for exact comparison
 const normalizeText = (text) => {
-  if (!text) return '';
-  // Trim, replace multiple spaces with single space, keep casing intact for grammar checks
-  return text.trim().replace(/\s+/g, ' ');
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+
+  return text
+    .trim()
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .toLowerCase();
 };
 
-// Grammar Engine: Evaluates a user's corrected text against specific rules for the 3 statements
-const analyzeGrammar = (statementId, text) => {
-  const norm = normalizeText(text);
+const analyzeGrammar = (originalText, correctedText) => {
   const feedback = [];
-  
-  if (statementId === 's1' || statementId.toString().includes('s1')) {
-    // Statement 1: "she dont have any idea how to fix it."
-    const hasCapitalShe = /^[S]he\b/.test(norm);
-    const hasCorrectDoesnt = /\b(doesn't|does not)\b/i.test(norm);
-    const hasProperDoesnt = /\b(doesn't|does not)\b/.test(norm); // case sensitive check
-    const hasPeriod = norm.endsWith('.');
+  const original = normalizeText(originalText);
+  const corrected = normalizeText(correctedText);
 
+  if (original.includes('dont') || original.includes('weekends')) {
     feedback.push({
-      rule: "Capitalize the first letter of the sentence ('She')",
-      passed: hasCapitalShe,
-      hint: "Make sure 'She' starts with a capital 'S'."
+      rule: 'Use correct helping verb',
+      passed: corrected.includes("doesn't") || corrected.includes('does not'),
+      hint: "Replace 'dont' with 'doesn't'"
     });
     feedback.push({
-      rule: "Use correct singular subject agreement ('doesn't' or 'does not')",
-      passed: hasCorrectDoesnt && hasProperDoesnt,
-      hint: "Replace 'dont' with 'doesn't' or 'does not' (spelled exactly)."
-    });
-    feedback.push({
-      rule: "End the sentence with a period ('.')",
-      passed: hasPeriod,
-      hint: "Add a period at the very end of the sentence."
-    });
-  } else if (statementId === 's2' || statementId.toString().includes('s2')) {
-    // Statement 2: "the dogs chased it's tail around in circles."
-    const startsWithThe = /^[T]he\b/.test(norm);
-    const hasCorrectTheir = /\btheir\b/i.test(norm);
-    const hasProperTheir = /\btheir\b/.test(norm);
-    const hasPeriod = norm.endsWith('.');
-
-    feedback.push({
-      rule: "Capitalize the first letter of the sentence ('The')",
-      passed: startsWithThe,
-      hint: "Make sure 'The' starts with a capital 'T'."
-    });
-    feedback.push({
-      rule: "Use correct plural possessive pronoun ('their')",
-      passed: hasCorrectTheir && hasProperTheir,
-      hint: "Replace the contraction 'it's' with possessive 'their' to match the plural 'dogs'."
-    });
-    feedback.push({
-      rule: "End the sentence with a period ('.')",
-      passed: hasPeriod,
-      hint: "Add a period at the very end of the sentence."
-    });
-  } else if (statementId === 's3' || statementId.toString().includes('s3')) {
-    // Statement 3: "we should of gone to the store earlier."
-    const startsWithWe = /^[W]e\b/.test(norm);
-    const hasCorrectHave = /\bhave\b/i.test(norm);
-    const hasProperHave = /\bhave\b/.test(norm);
-    const hasPeriod = norm.endsWith('.');
-
-    feedback.push({
-      rule: "Capitalize the first letter of the sentence ('We')",
-      passed: startsWithWe,
-      hint: "Make sure 'We' starts with a capital 'W'."
-    });
-    feedback.push({
-      rule: "Use helper verb 'have' instead of preposition 'of'",
-      passed: hasCorrectHave && hasProperHave,
-      hint: "Change 'should of' to 'should have'."
-    });
-    feedback.push({
-      rule: "End the sentence with a period ('.')",
-      passed: hasPeriod,
-      hint: "Add a period at the very end of the sentence."
+      rule: 'Use singular noun',
+      passed: corrected.includes('every weekend'),
+      hint: "Replace 'weekends' with 'weekend'"
     });
   }
+
+  if (original.includes('forgot buy') || original.includes('market')) {
+    feedback.push({
+      rule: 'Use article before market',
+      passed: corrected.includes('the market'),
+      hint: "Use 'the market'"
+    });
+    feedback.push({
+      rule: 'Use infinitive verb',
+      passed: corrected.includes('to buy'),
+      hint: "Use 'to buy'"
+    });
+  }
+
+  if (original.includes('was happy') || original.includes('there project')) {
+    feedback.push({
+      rule: 'Use plural helping verb',
+      passed: corrected.includes('were happy'),
+      hint: "Use 'were happy'"
+    });
+    feedback.push({
+      rule: 'Use correct possessive pronoun',
+      passed: corrected.includes('their project'),
+      hint: "Replace 'there' with 'their'"
+    });
+  }
+
+  feedback.push({
+    rule: 'Sentence should start with capital letter',
+    passed: /^[A-Z]/.test(correctedText?.trim()),
+    hint: 'Capitalize first letter'
+  });
+
+  feedback.push({
+    rule: 'Sentence should end with period',
+    passed: correctedText?.trim().endsWith('.'),
+    hint: 'Add period at end'
+  });
 
   return feedback;
 };
 
-// @desc    Get all statements (without correct answers for security)
-// @route   GET /api/statements
-// @access  Private
 exports.getStatements = async (req, res) => {
   try {
     const isMock = getDbMode();
 
     if (isMock) {
-      // Map statements to hide correct answers
-      const safeStatements = mockDb.statements.map(s => ({
-        id: s.id,
-        text: s.text,
-        explanation: s.explanation,
-        errors: s.errors
+      const safeStatements = mockDb.statements.map((statement) => ({
+        _id: statement.id,
+        text: statement.text
       }));
-      return res.json(safeStatements);
-    } else {
-      // Get from MongoDB, project to exclude 'corrections'
-      const statements = await Statement.find({}, '-corrections');
-      return res.json(statements);
+      return res.status(200).json(safeStatements);
     }
+
+    const statements = await Statement.find({}, { correctAnswer: 0, __v: 0 });
+    return res.status(200).json(statements);
   } catch (error) {
     console.error('getStatements error:', error);
-    return res.status(500).json({ message: 'Server error retrieving statements' });
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving statements'
+    });
   }
 };
 
-// @desc    Submit corrected statements and get results
-// @route   POST /api/statements/submit
-// @access  Private
 exports.submitCorrections = async (req, res) => {
-  const { corrections } = req.body; // Array: [{ statementId, correctedText }]
-
-  if (!corrections || !Array.isArray(corrections) || corrections.length === 0) {
-    return res.status(400).json({ message: 'Please provide corrections' });
-  }
-
   try {
+    const { corrections } = req.body;
+
+    if (!corrections || !Array.isArray(corrections) || corrections.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide corrections'
+      });
+    }
+
     const isMock = getDbMode();
     let score = 0;
     const gradedCorrections = [];
+    const submissionCorrections = [];
 
-    for (const correction of corrections) {
-      const { statementId, correctedText } = correction;
-      const normalizedInput = normalizeText(correctedText);
-      let isCorrect = false;
-      let originalText = '';
-      let correctionsList = [];
-      let explanation = '';
+    for (const item of corrections) {
+      const statementId = item.statementId;
+      const correctedText = item.correctedText;
 
-      if (isMock) {
-        // Query from mock db
-        const statement = mockDb.statements.find(s => s.id === statementId);
-        if (statement) {
-          originalText = statement.text;
-          correctionsList = statement.corrections;
-          explanation = statement.explanation;
-          
-          // Check if normalized matches any normalized accepted corrections
-          isCorrect = correctionsList.some(
-            correctAns => normalizeText(correctAns) === normalizedInput
-          );
-        }
-      } else {
-        // Query from MongoDB
-        const statement = await Statement.findById(statementId);
-        if (statement) {
-          originalText = statement.text;
-          correctionsList = statement.corrections;
-          explanation = statement.explanation;
-
-          isCorrect = correctionsList.some(
-            correctAns => normalizeText(correctAns) === normalizedInput
-          );
-        }
+      if (!statementId || !correctedText) {
+        gradedCorrections.push({
+          statementId,
+          correctedText,
+          isCorrect: false,
+          message: 'Invalid correction data'
+        });
+        continue;
       }
 
-      if (isCorrect) score += 1;
+      let statement = null;
+      if (isMock) {
+        statement = mockDb.statements.find(
+          (s) => s.id.toString() === statementId.toString()
+        );
+      } else {
+        statement = await Statement.findById(statementId);
+      }
 
-      // Run detailed rule evaluation
-      const grammarAnalysis = analyzeGrammar(statementId, correctedText);
+      if (!statement) {
+        gradedCorrections.push({
+          statementId,
+          correctedText,
+          isCorrect: false,
+          message: 'Statement not found'
+        });
+        continue;
+      }
+
+      const originalText = statement.text;
+      const correctAnswer = statement.correctAnswer || (statement.corrections || [])[0] || '';
+      const acceptedAnswers = [
+        ...(statement.correctAnswer ? [statement.correctAnswer] : []),
+        ...(Array.isArray(statement.corrections) ? statement.corrections : [])
+      ].filter(Boolean);
+
+      const isCorrect = acceptedAnswers.some(
+        (answer) => normalizeText(answer) === normalizeText(correctedText)
+      );
+
+      if (isCorrect) {
+        score++;
+      }
+
+      const grammarAnalysis = analyzeGrammar(originalText, correctedText);
+
+      submissionCorrections.push({
+        statementId,
+        originalText,
+        correctedText,
+        isCorrect
+      });
 
       gradedCorrections.push({
         statementId,
         originalText,
         correctedText,
+        correctAnswer,
         isCorrect,
-        explanation,
         grammarAnalysis
       });
     }
 
-    const overallCorrect = score === gradedCorrections.length;
-
-    let submissionId = `sub_${Date.now()}`;
+    const overallCorrect = score === corrections.length;
 
     if (!isMock) {
-      // Save to MongoDB using mongoose
-      const mongoCorrections = gradedCorrections.map(c => ({
-        statementId: c.statementId,
-        originalText: c.originalText,
-        correctedText: c.correctedText,
-        isCorrect: c.isCorrect
-      }));
+      try {
+        const userId = req.user?.id || req.user?._id;
 
-      const newSubmission = await Submission.create({
-        user: req.user.id,
-        corrections: mongoCorrections,
-        score,
-        overallCorrect
-      });
-      submissionId = newSubmission._id;
-    } else {
-      // Save to mock storage
-      const mockSubmission = {
-        id: submissionId,
-        userId: req.user.id,
-        corrections: gradedCorrections.map(c => ({
-          statementId: c.statementId,
-          originalText: c.originalText,
-          correctedText: c.correctedText,
-          isCorrect: c.isCorrect
-        })),
-        score,
-        overallCorrect,
-        submittedAt: new Date()
-      };
-      mockDb.submissions.push(mockSubmission);
+        if (!userId) {
+          console.error('User ID missing in req.user');
+        } else {
+          await Submission.create({
+            user: userId,
+            corrections: submissionCorrections,
+            score,
+            overallCorrect,
+            submittedAt: new Date()
+          });
+        }
+      } catch (saveErr) {
+        console.error('Failed to save submission:', saveErr);
+      }
     }
 
-    return res.json({
-      submissionId,
+    return res.status(200).json({
+      success: true,
       score,
-      totalStatements: gradedCorrections.length,
+      totalStatements: corrections.length,
       overallCorrect,
       corrections: gradedCorrections,
-      message: overallCorrect 
-        ? "Congratulations! All statements are completely error-free."
-        : `Some corrections were incorrect. You scored ${score} out of ${gradedCorrections.length}.`
+      message: overallCorrect
+        ? 'All statements corrected successfully!'
+        : `You scored ${score} out of ${corrections.length}`
     });
-
   } catch (error) {
     console.error('submitCorrections error:', error);
-    return res.status(500).json({ message: 'Server error processing corrections' });
+    return res.status(500).json({
+      success: false,
+      message: 'Server error processing corrections'
+    });
   }
 };
